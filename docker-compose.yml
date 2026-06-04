@@ -1,7 +1,7 @@
 services:
   opcua-sim-web:
     build: .
-    image: opcua-sim-web:1.0
+    image: opcua-sim-web:2.0
     container_name: opcua-sim-web
     restart: unless-stopped
     ports:
