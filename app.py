@@ -102,6 +102,18 @@ def _safe_node_value(node):
         return None
 
 def get_nodes_for_sensors(client, folder_name):
+    """
+    Сканирует дерево OPC UA начиная с папки folder_name.
+
+    Группировка по group_key = полный путь до папки-родителя тега + entity_key.
+    entity_key = часть browse_name до последней точки (AI001 из AI001.IN).
+
+    ВАЖНО: group_key включает полный путь (current_path), поэтому датчики
+    с одинаковым именем в разных папках (OPC_AIN_1 в Station1 и Station2)
+    — это РАЗНЫЕ группы и попадут в симулятор как отдельные датчики.
+    Дублями считаются только теги с одинаковым суффиксом внутри одной группы
+    (одна и та же физическая точка с двумя nodeId) — из них берётся первый.
+    """
     sensors = []
     try:
         root = client.get_root_node()
@@ -114,9 +126,12 @@ def get_nodes_for_sensors(client, folder_name):
         if not target_folder:
             debug_print(f"Папка '{folder_name}' не найдена")
             return sensors
+
+        # groups: group_key → dict с тегами и метаданными
         groups = {}
         nodes_to_scan = [(target_folder, folder_name)]
         total_variables = 0
+
         while nodes_to_scan:
             current_node, current_path = nodes_to_scan.pop()
             for child in current_node.get_children():
@@ -124,30 +139,43 @@ def get_nodes_for_sensors(client, folder_name):
                     browse_name = child.get_browse_name().Name
                     node_class = child.get_node_class().name
                     child_path = _build_path(current_path, browse_name)
+
                     if node_class == "Object":
                         nodes_to_scan.append((child, child_path))
                         continue
                     if node_class != "Variable":
                         continue
+
                     total_variables += 1
                     upper_name = browse_name.upper()
+
                     if "." not in upper_name:
                         continue
-                    entity_key = upper_name.rsplit(".", 1)[0]
-                    suffix = upper_name.rsplit(".", 1)[-1]
+
+                    # Делим по последней точке:
+                    #   "OPC_AIN_1.IN"     → entity_key="OPC_AIN_1", suffix="IN"
+                    #   "UNIT.AI001.IN_HSC" → entity_key="UNIT.AI001", suffix="IN_HSC"
+                    entity_key, suffix = upper_name.rsplit(".", 1)
+
                     if suffix not in REQUIRED_SUFFIXES:
                         continue
+
+                    # Ключ группы = папка-родитель + entity_key.
+                    # Два тега OPC_AIN_1.IN в разных папках (Station1 vs Station2)
+                    # получат разные group_key и не смешаются.
                     group_key = f"{current_path}/{entity_key}"
+
                     group = groups.setdefault(group_key, {
-                        "name": entity_key.split(".")[-1],
+                        "name": entity_key.split(".")[-1],   # последний сегмент для отображения
                         "entity_key": entity_key,
                         "path": current_path,
                         "full_path": group_key,
                         "parent_path": current_path,
-                        "tags": {},
-                        "nodeids": {},
-                        "entities": [],
+                        "tags": {},      # suffix → node
+                        "nodeids": {},   # suffix → str
+                        "entities": [], # все теги для UI
                     })
+
                     entity_info = {
                         "suffix": suffix,
                         "tag_name": browse_name,
@@ -158,40 +186,48 @@ def get_nodes_for_sensors(client, folder_name):
                         "node": child,
                     }
                     group["entities"].append(entity_info)
+
                     if suffix in group["tags"]:
-                        prev_nodeid = group["nodeids"].get(suffix)
+                        # Настоящий дубль: тот же суффикс в той же папке с тем же именем.
+                        # Оставляем первый найденный — они ссылаются на одну точку.
                         debug_print(
-                            f"Дубликат суффикса {suffix} в сущности {group_key}: "
-                            f"оставляем первый узел {prev_nodeid}, пропускаем {_nodeid_str(child)}"
+                            f"Дубль суффикса {suffix} в группе {group_key}: "
+                            f"оставляем {group['nodeids'][suffix]}, "
+                            f"пропускаем {_nodeid_str(child)}"
                         )
                         continue
+
                     group["tags"][suffix] = child
                     group["nodeids"][suffix] = _nodeid_str(child)
+
                 except Exception as e:
                     debug_print(f"Ошибка обработки узла {child}: {e}")
+
         incomplete = 0
         for group_key, group in groups.items():
-            missing = [suffix for suffix in REQUIRED_SUFFIXES if suffix not in group["tags"]]
+            missing = [s for s in REQUIRED_SUFFIXES if s not in group["tags"]]
             if missing:
                 incomplete += 1
-                debug_print(f"Неполная сущность {group_key}: отсутствуют {', '.join(missing)}")
+                debug_print(f"Неполная группа {group_key}: отсутствуют {', '.join(missing)}")
                 continue
+
             entities_sorted = sorted(
                 group["entities"],
                 key=lambda x: (x["suffix"], x["path"], x["nodeid"])
             )
-            nodes_dict = {suffix: group["tags"][suffix] for suffix in REQUIRED_SUFFIXES}
-            nodes_dict["node"] = group["tags"]["IN"]
-            nodes_dict["name"] = group["name"]
-            nodes_dict["path"] = group["full_path"]
-            nodes_dict["nodeid"] = group["nodeids"]["IN"]
-            nodes_dict["entity_key"] = group["entity_key"]
+            nodes_dict = {s: group["tags"][s] for s in REQUIRED_SUFFIXES}
+            nodes_dict["node"]         = group["tags"]["IN"]
+            nodes_dict["name"]         = group["name"]
+            nodes_dict["path"]         = group["full_path"]
+            nodes_dict["nodeid"]       = group["nodeids"]["IN"]
+            nodes_dict["entity_key"]   = group["entity_key"]
             nodes_dict["entity_count"] = len(entities_sorted)
-            nodes_dict["entities"] = entities_sorted
+            nodes_dict["entities"]     = entities_sorted
             sensors.append(nodes_dict)
+
         debug_print(
-            f"Сканирование завершено: variables={total_variables}, groups={len(groups)}, "
-            f"complete={len(sensors)}, incomplete={incomplete}"
+            f"Сканирование завершено: variables={total_variables}, "
+            f"groups={len(groups)}, complete={len(sensors)}, incomplete={incomplete}"
         )
     except Exception as e:
         debug_print(f"Ошибка сканирования папки: {e}")
@@ -216,51 +252,51 @@ def write_node_value(node, value, data_type):
 
 class AnalogSensorSimulator:
     def __init__(self, nodes_dict, low, high, interval_min, upper_shift_time_sec, lower_shift_time_sec, random_mode):
-        self.name = nodes_dict.get("name", "UNKNOWN")
-        self.path = nodes_dict.get("path", self.name)
-        self.entity_key = nodes_dict.get("entity_key", self.name)
+        self.name          = nodes_dict.get("name", "UNKNOWN")
+        self.path          = nodes_dict.get("path", self.name)
+        self.entity_key    = nodes_dict.get("entity_key", self.name)
         self.source_nodeid = nodes_dict.get("nodeid", "")
-        self.entities = nodes_dict.get("entities", [])
-        self.entity_count = nodes_dict.get("entity_count", len(self.entities))
-        self.node = nodes_dict.get("node")
-        self.IN_HSC = nodes_dict.get("IN_HSC")
-        self.IN_LSC = nodes_dict.get("IN_LSC")
+        self.entities      = nodes_dict.get("entities", [])
+        self.entity_count  = nodes_dict.get("entity_count", len(self.entities))
+        self.node          = nodes_dict.get("node")
+        self.IN_HSC  = nodes_dict.get("IN_HSC")
+        self.IN_LSC  = nodes_dict.get("IN_LSC")
         self.OUT_HSC = nodes_dict.get("OUT_HSC")
         self.OUT_LSC = nodes_dict.get("OUT_LSC")
-        self.HHALIM = nodes_dict.get("HHALIM")
-        self.HALIM = nodes_dict.get("HALIM")
-        self.LALIM = nodes_dict.get("LALIM")
-        self.LLALIM = nodes_dict.get("LLALIM")
-        self.interval_sec = interval_min * 60
-        self.upper_shift_time = upper_shift_time_sec
-        self.lower_shift_time = lower_shift_time_sec
-        self.random_mode = random_mode
-        self.manual_alarm = None
+        self.HHALIM  = nodes_dict.get("HHALIM")
+        self.HALIM   = nodes_dict.get("HALIM")
+        self.LALIM   = nodes_dict.get("LALIM")
+        self.LLALIM  = nodes_dict.get("LLALIM")
+        self.interval_sec       = interval_min * 60
+        self.upper_shift_time   = upper_shift_time_sec
+        self.lower_shift_time   = lower_shift_time_sec
+        self.random_mode        = random_mode
+        self.manual_alarm       = None
         self.manual_alarm_until = 0
-        self.last_active_state = "normal"
-        self.in_lsc_val = self._safe_get(self.IN_LSC, 0.0)
-        self.in_hsc_val = self._safe_get(self.IN_HSC, 1.0)
+        self.last_active_state  = "normal"
+        self.in_lsc_val  = self._safe_get(self.IN_LSC,  0.0)
+        self.in_hsc_val  = self._safe_get(self.IN_HSC,  1.0)
         self.out_lsc_val = self._safe_get(self.OUT_LSC, low)
         self.out_hsc_val = self._safe_get(self.OUT_HSC, high)
-        halim_val = self._safe_get(self.HALIM, high)
-        lalim_val = self._safe_get(self.LALIM, low)
+        halim_val  = self._safe_get(self.HALIM,  high)
+        lalim_val  = self._safe_get(self.LALIM,  low)
         hhalim_val = self._safe_get(self.HHALIM, halim_val)
         llalim_val = self._safe_get(self.LLALIM, lalim_val)
-        self.normal_work_low = lalim_val
-        self.normal_work_high = halim_val
-        self.upper_work_low = halim_val
-        self.upper_work_high = hhalim_val
-        self.lower_work_low = llalim_val
-        self.lower_work_high = lalim_val
-        span = self.out_hsc_val - self.out_lsc_val
+        self.normal_work_low   = lalim_val
+        self.normal_work_high  = halim_val
+        self.upper_work_low    = halim_val
+        self.upper_work_high   = hhalim_val
+        self.lower_work_low    = llalim_val
+        self.lower_work_high   = lalim_val
+        span    = self.out_hsc_val - self.out_lsc_val
         reserve = max(abs(span) * 0.05, 0.001)
-        self.crit_high_low = max(hhalim_val, self.upper_work_high)
+        self.crit_high_low  = max(hhalim_val, self.upper_work_high)
         self.crit_high_high = max(self.out_hsc_val, self.crit_high_low + reserve)
-        self.crit_low_high = min(llalim_val, self.lower_work_low)
-        self.crit_low_low = min(self.out_lsc_val, self.crit_low_high - reserve)
-        self.current_value = (self.normal_work_low + self.normal_work_high) / 2
+        self.crit_low_high  = min(llalim_val, self.lower_work_low)
+        self.crit_low_low   = min(self.out_lsc_val, self.crit_low_high - reserve)
+        self.current_value  = (self.normal_work_low + self.normal_work_high) / 2
         self.internal_value = self.inverse_scale_output_to_input(self.current_value)
-        self.state = "normal"
+        self.state            = "normal"
         self.state_start_time = time.time()
         self._tick = 0
 
@@ -279,11 +315,11 @@ class AnalogSensorSimulator:
         return self.in_lsc_val + scale * (self.in_hsc_val - self.in_lsc_val)
 
     def trigger_manual_alarm(self, alarm_type, duration):
-        self.manual_alarm = alarm_type
+        self.manual_alarm       = alarm_type
         self.manual_alarm_until = time.time() + float(duration)
 
     def clear_manual_alarm(self):
-        self.manual_alarm = None
+        self.manual_alarm       = None
         self.manual_alarm_until = 0
 
     def get_active_range(self):
@@ -329,10 +365,10 @@ class AnalogSensorSimulator:
             current_value = _safe_node_value(node) if node else None
             entities.append({
                 "tag_name": item.get("tag_name") or "-",
-                "suffix": item.get("suffix") or "-",
-                "value": current_value,
-                "nodeid": item.get("nodeid") or "-",
-                "path": item.get("path") or "-",
+                "suffix":   item.get("suffix")   or "-",
+                "value":    current_value,
+                "nodeid":   item.get("nodeid")   or "-",
+                "path":     item.get("path")     or "-",
             })
         return entities
 
@@ -345,7 +381,7 @@ class AnalogSensorSimulator:
                 else:
                     target = (work_low + work_high) / 2
                     self.current_value += (target - self.current_value) * 0.1
-                self.current_value = max(work_low, min(self.current_value, work_high))
+                self.current_value  = max(work_low, min(self.current_value, work_high))
                 self.internal_value = self.inverse_scale_output_to_input(self.current_value)
                 write_ok = write_node_value(
                     self.node,
@@ -366,21 +402,21 @@ class AnalogSensorSimulator:
 
 class Backend:
     def __init__(self):
-        self.client = None
-        self.sensors = []
-        self.connected = False
-        self.connecting = False
-        self.stop_event = threading.Event()
-        self.loop = None
+        self.client        = None
+        self.sensors       = []
+        self.connected     = False
+        self.connecting    = False
+        self.stop_event    = threading.Event()
+        self.loop          = None
         self.worker_thread = None
         self.params = {
-            "server_url": f"opc.tcp://{DEFAULT_SERVER_IP}",
-            "low": DEFAULT_LOW,
-            "high": DEFAULT_HIGH,
-            "interval": DEFAULT_INTERVAL,
+            "server_url":       f"opc.tcp://{DEFAULT_SERVER_IP}",
+            "low":              DEFAULT_LOW,
+            "high":             DEFAULT_HIGH,
+            "interval":         DEFAULT_INTERVAL,
             "upper_shift_time": DEFAULT_UPPER,
             "lower_shift_time": DEFAULT_LOWER,
-            "random_mode": DEFAULT_RANDOM if DEFAULT_RANDOM in ("y", "n") else "y",
+            "random_mode":      DEFAULT_RANDOM if DEFAULT_RANDOM in ("y", "n") else "y",
         }
         self.lock = threading.Lock()
         self.logs = []
@@ -393,44 +429,44 @@ class Backend:
 
     def status(self):
         with self.lock:
-            rows = []
+            rows   = []
             groups = []
-            now = time.time()
-            total_entities = 0
+            now    = time.time()
+            total_entities  = 0
             active_entities = 0
             for idx, sensor in enumerate(self.sensors):
                 remaining = max(0, int(sensor.manual_alarm_until - now)) if sensor.manual_alarm else 0
-                entities = sensor.build_entities_status()
+                entities  = sensor.build_entities_status()
                 total_entities += len(entities)
                 if sensor.manual_alarm:
                     active_entities += len(entities)
                 base_row = {
-                    "idx": idx,
-                    "name": sensor.name,
-                    "path": sensor.path,
-                    "entity_key": sensor.entity_key,
-                    "nodeid": sensor.source_nodeid,
-                    "value": round(sensor.current_value, 3),
-                    "state": sensor.last_active_state,
-                    "manual_alarm": sensor.manual_alarm or "-",
-                    "remaining": remaining,
-                    "mode": sensor.random_mode,
-                    "entity_count": sensor.entity_count,
+                    "idx":               idx,
+                    "name":              sensor.name,
+                    "path":              sensor.path,
+                    "entity_key":        sensor.entity_key,
+                    "nodeid":            sensor.source_nodeid,
+                    "value":             round(sensor.current_value, 3),
+                    "state":             sensor.last_active_state,
+                    "manual_alarm":      sensor.manual_alarm or "-",
+                    "remaining":         remaining,
+                    "mode":              sensor.random_mode,
+                    "entity_count":      sensor.entity_count,
                     "active_entity_count": len(entities) if sensor.manual_alarm else 0,
                 }
                 rows.append(base_row)
                 groups.append({**base_row, "entities": entities})
             return {
-                "connected": self.connected,
-                "connecting": self.connecting,
-                "total": len(self.sensors),
-                "active": sum(1 for s in self.sensors if s.manual_alarm),
-                "total_entities": total_entities,
+                "connected":       self.connected,
+                "connecting":      self.connecting,
+                "total":           len(self.sensors),
+                "active":          sum(1 for s in self.sensors if s.manual_alarm),
+                "total_entities":  total_entities,
                 "active_entities": active_entities,
-                "params": self.params,
-                "logs": self.logs[-80:],
-                "rows": rows,
-                "groups": groups,
+                "params":          self.params,
+                "logs":            self.logs[-80:],
+                "rows":            rows,
+                "groups":          groups,
             }
 
     def connect(self, params):
@@ -442,7 +478,7 @@ class Backend:
         self.params = params
         self.stop_event.clear()
         self.connecting = True
-        self.connected = False
+        self.connected  = False
         self.log("Получена команда на запуск из веб-интерфейса")
         self.worker_thread = threading.Thread(target=self._run_loop, daemon=True)
         self.worker_thread.start()
@@ -475,19 +511,19 @@ class Backend:
                 pass
             self.loop = None
         with self.lock:
-            self.connected = False
+            self.connected  = False
             self.connecting = False
-            self.sensors = []
+            self.sensors    = []
         self.log("Эмулятор остановлен")
 
     async def _async_main(self):
-        url = self.params["server_url"]
-        low = self.params["low"]
-        high = self.params["high"]
-        interval = self.params["interval"]
+        url         = self.params["server_url"]
+        low         = self.params["low"]
+        high        = self.params["high"]
+        interval    = self.params["interval"]
         upper_shift = self.params["upper_shift_time"]
         lower_shift = self.params["lower_shift_time"]
-        mode = self.params["random_mode"]
+        mode        = self.params["random_mode"]
         client = None
         try:
             client = Client(url, timeout=5)
@@ -518,8 +554,8 @@ class Backend:
                 for nd in nodes_dicts
             ]
             with self.lock:
-                self.sensors = sensors
-                self.connected = True
+                self.sensors    = sensors
+                self.connected  = True
                 self.connecting = False
             self.log(f"Найдено датчиков: {len(sensors)}")
             tasks = [asyncio.create_task(sensor.update(self.stop_event)) for sensor in sensors]
@@ -533,7 +569,7 @@ class Backend:
                 await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:
             with self.lock:
-                self.connected = False
+                self.connected  = False
                 self.connecting = False
             self.log(f"Ошибка запуска: {e}")
         finally:
@@ -576,15 +612,15 @@ class Backend:
 
     def apply_generation_settings(self, interval, upper_shift, lower_shift, random_mode):
         with self.lock:
-            self.params["interval"] = interval
+            self.params["interval"]         = interval
             self.params["upper_shift_time"] = upper_shift
             self.params["lower_shift_time"] = lower_shift
-            self.params["random_mode"] = random_mode
+            self.params["random_mode"]      = random_mode
             for sensor in self.sensors:
-                sensor.interval_sec = interval * 60
-                sensor.upper_shift_time = upper_shift
-                sensor.lower_shift_time = lower_shift
-                sensor.random_mode = random_mode
+                sensor.interval_sec       = interval * 60
+                sensor.upper_shift_time   = upper_shift
+                sensor.lower_shift_time   = lower_shift
+                sensor.random_mode        = random_mode
             self.log("Параметры генерации обновлены")
             return True, "Параметры обновлены"
 
@@ -595,26 +631,26 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 class ConnectRequest(BaseModel):
-    server_url: str
-    low: float
-    high: float
-    interval: float
+    server_url:       str
+    low:              float
+    high:             float
+    interval:         float
     upper_shift_time: float
     lower_shift_time: float
-    random_mode: str
+    random_mode:      str
 
 
 class GroupRequest(BaseModel):
-    count: int
-    mode: str
+    count:    int
+    mode:     str
     duration: float
 
 
 class SettingsRequest(BaseModel):
-    interval: float
+    interval:         float
     upper_shift_time: float
     lower_shift_time: float
-    random_mode: str
+    random_mode:      str
 
 
 @app.get("/api/status")
