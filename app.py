@@ -86,6 +86,27 @@ def _nodeid_str(node):
     except Exception:
         return str(node)
 
+def _nodeid_group_prefix(nodeid_str):
+    """
+    Извлекает уникальный префикс датчика из nodeId.
+
+    Пример nodeId: ns=2;s=beefc5cde80bc195.a36b8db8a7601200.IN-4008
+    Структура:      ns=2;s=<префикс сервера>.<уникальный ID датчика>.<СУФФИКС-номер>
+
+    Возвращает часть после 'ns=2;s=' до последней точки (без суффикса):
+      'beefc5cde80bc195.a36b8db8a7601200'
+
+    Если формат не совпадает — возвращает весь nodeid_str целиком.
+    """
+    # Отрежем 'ns=X;s=' префикс если есть
+    identifier = nodeid_str
+    if ";s=" in nodeid_str:
+        identifier = nodeid_str.split(";s=", 1)[1]
+    # Убираем последнюю часть после последней точки (суффикс с номером)
+    if "." in identifier:
+        return identifier.rsplit(".", 1)[0]  # 'beefc5cde80bc195.a36b8db8a7601200'
+    return identifier
+
 def _build_path(parent_path, browse_name):
     return browse_name if not parent_path else f"{parent_path}/{browse_name}"
 
@@ -105,14 +126,15 @@ def get_nodes_for_sensors(client, folder_name):
     """
     Сканирует дерево OPC UA начиная с папки folder_name.
 
-    Группировка по group_key = полный путь до папки-родителя тега + entity_key.
-    entity_key = часть browse_name до последней точки (AI001 из AI001.IN).
+    Группировка по nodeId-префиксу датчика.
 
-    ВАЖНО: group_key включает полный путь (current_path), поэтому датчики
-    с одинаковым именем в разных папках (OPC_AIN_1 в Station1 и Station2)
-    — это РАЗНЫЕ группы и попадут в симулятор как отдельные датчики.
-    Дублями считаются только теги с одинаковым суффиксом внутри одной группы
-    (одна и та же физическая точка с двумя nodeId) — из них берётся первый.
+    nodeId формата: ns=2;s=<префикс сервера>.<уник ID датчика>.<СУФФИКС-номер>
+    Для одного физического датчика все теги имеют одинаковый префикс:
+      beefc5cde80bc195.a36b8db8a7601200.IN-4008
+      beefc5cde80bc195.a36b8db8a7601200.HALIM-4006
+      beefc5cde80bc195.a36b8db8a7601200.IN_HSC-4009
+
+    Датчики с одинаковым browse_name, но разным nodeId-префиксом — разные датчики.
     """
     sensors = []
     try:
@@ -127,7 +149,7 @@ def get_nodes_for_sensors(client, folder_name):
             debug_print(f"Папка '{folder_name}' не найдена")
             return sensors
 
-        # groups: group_key → dict с тегами и метаданными
+        # groups: nodeid_prefix -> dict с тегами и метаданными
         groups = {}
         nodes_to_scan = [(target_folder, folder_name)]
         total_variables = 0
@@ -137,8 +159,8 @@ def get_nodes_for_sensors(client, folder_name):
             for child in current_node.get_children():
                 try:
                     browse_name = child.get_browse_name().Name
-                    node_class = child.get_node_class().name
-                    child_path = _build_path(current_path, browse_name)
+                    node_class  = child.get_node_class().name
+                    child_path  = _build_path(current_path, browse_name)
 
                     if node_class == "Object":
                         nodes_to_scan.append((child, child_path))
@@ -152,53 +174,48 @@ def get_nodes_for_sensors(client, folder_name):
                     if "." not in upper_name:
                         continue
 
-                    # Делим по последней точке:
-                    #   "OPC_AIN_1.IN"     → entity_key="OPC_AIN_1", suffix="IN"
-                    #   "UNIT.AI001.IN_HSC" → entity_key="UNIT.AI001", suffix="IN_HSC"
                     entity_key, suffix = upper_name.rsplit(".", 1)
 
                     if suffix not in REQUIRED_SUFFIXES:
                         continue
 
-                    # Ключ группы = папка-родитель + entity_key.
-                    # Два тега OPC_AIN_1.IN в разных папках (Station1 vs Station2)
-                    # получат разные group_key и не смешаются.
-                    group_key = f"{current_path}/{entity_key}"
+                    nodeid_s   = _nodeid_str(child)
+                    # Уникальный ключ группы = nodeId-префикс (общий для всех тегов одного датчика)
+                    group_key  = _nodeid_group_prefix(nodeid_s)
 
                     group = groups.setdefault(group_key, {
-                        "name": entity_key.split(".")[-1],   # последний сегмент для отображения
-                        "entity_key": entity_key,
-                        "path": current_path,
-                        "full_path": group_key,
+                        "name":        entity_key.split(".")[-1],
+                        "entity_key":  entity_key,
+                        "path":        current_path,
+                        "full_path":   f"{current_path}/{entity_key}",
                         "parent_path": current_path,
-                        "tags": {},      # suffix → node
-                        "nodeids": {},   # suffix → str
-                        "entities": [], # все теги для UI
+                        "tags":    {},
+                        "nodeids": {},
+                        "entities": [],
                     })
 
                     entity_info = {
-                        "suffix": suffix,
-                        "tag_name": browse_name,
+                        "suffix":     suffix,
+                        "tag_name":   browse_name,
                         "entity_key": entity_key,
-                        "path": child_path,
+                        "path":       child_path,
                         "group_path": group_key,
-                        "nodeid": _nodeid_str(child),
-                        "node": child,
+                        "nodeid":     nodeid_s,
+                        "node":       child,
                     }
                     group["entities"].append(entity_info)
 
                     if suffix in group["tags"]:
-                        # Настоящий дубль: тот же суффикс в той же папке с тем же именем.
-                        # Оставляем первый найденный — они ссылаются на одну точку.
+                        # Настоящий дубль внутри одного nodeId-префикса — оставляем первый
                         debug_print(
-                            f"Дубль суффикса {suffix} в группе {group_key}: "
+                            f"Дубль {suffix} в префиксе {group_key}: "
                             f"оставляем {group['nodeids'][suffix]}, "
-                            f"пропускаем {_nodeid_str(child)}"
+                            f"пропускаем {nodeid_s}"
                         )
                         continue
 
-                    group["tags"][suffix] = child
-                    group["nodeids"][suffix] = _nodeid_str(child)
+                    group["tags"][suffix]   = child
+                    group["nodeids"][suffix] = nodeid_s
 
                 except Exception as e:
                     debug_print(f"Ошибка обработки узла {child}: {e}")
