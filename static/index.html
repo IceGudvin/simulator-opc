@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OPC UA Simulator</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <a href="#main-content" class="sr-only skip-link">Перейти к основному содержимому</a>
+
+  <main id="main-content" class="wrap">
+    <section aria-labelledby="page-title">
+      <div class="card">
+        <h1 id="page-title">OPC UA эмулятор</h1>
+        <p class="muted">Веб-версия для запуска в Docker и открытия через браузер.</p>
+        <div id="ui-message" class="ui-message hidden" role="status" aria-live="polite"></div>
+      </div>
+
+      <section class="card mt16" aria-labelledby="connect-title">
+        <h2 id="connect-title">Подключение и генерация</h2>
+        <fieldset>
+          <legend class="sr-only">Параметры подключения и генерации</legend>
+          <label for="server_url">Адрес OPC UA сервера</label>
+          <input id="server_url" name="server_url" type="text" autocomplete="off" spellcheck="false" />
+          <div class="row">
+            <div>
+              <label for="low">Нижняя граница</label>
+              <input id="low" name="low" type="number" step="any" inputmode="decimal" autocomplete="off" />
+            </div>
+            <div>
+              <label for="high">Верхняя граница</label>
+              <input id="high" name="high" type="number" step="any" inputmode="decimal" autocomplete="off" />
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="interval">Интервал, мин</label>
+              <input id="interval" name="interval" type="number" step="any" inputmode="decimal" autocomplete="off" />
+            </div>
+            <div>
+              <label for="random_mode">Режим</label>
+              <select id="random_mode" name="random_mode">
+                <option value="y">Случайный</option>
+                <option value="n">Плавный</option>
+              </select>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label for="upper_shift_time">Верхний диапазон, сек</label>
+              <input id="upper_shift_time" name="upper_shift_time" type="number" step="any" inputmode="decimal" autocomplete="off" />
+            </div>
+            <div>
+              <label for="lower_shift_time">Нижний диапазон, сек</label>
+              <input id="lower_shift_time" name="lower_shift_time" type="number" step="any" inputmode="decimal" autocomplete="off" />
+            </div>
+          </div>
+          <div class="row mt12">
+            <button id="btn-connect" class="btn-primary" type="button">Подключить и запустить</button>
+            <button id="btn-disconnect" type="button">Остановить</button>
+          </div>
+          <button id="btn-apply-settings" class="mt8" type="button">Применить параметры к активным датчикам</button>
+        </fieldset>
+      </section>
+
+      <section class="card mt16" aria-labelledby="alarms-title">
+        <h2 id="alarms-title">Полуавтоматические тревоги</h2>
+        <fieldset>
+          <legend class="sr-only">Параметры ручных тревог</legend>
+          <div class="row">
+            <div>
+              <label for="group_count">Количество групп</label>
+              <input id="group_count" name="group_count" type="number" value="50" min="1" step="1" inputmode="numeric" autocomplete="off" />
+            </div>
+            <div>
+              <label for="group_duration">Длительность, сек</label>
+              <input id="group_duration" name="group_duration" type="number" value="30" step="any" min="0" inputmode="decimal" autocomplete="off" />
+            </div>
+          </div>
+          <div class="row3 mt12">
+            <button id="btn-warn" type="button">Предупр.</button>
+            <button id="btn-crit" type="button">Крит.</button>
+            <button id="btn-mixed" type="button">Смеш.</button>
+          </div>
+          <button id="btn-clear-alarms" class="mt8" type="button">Снять все тревоги</button>
+        </fieldset>
+      </section>
+
+      <section class="card mt16" aria-labelledby="logs-title">
+        <h2 id="logs-title">Журнал</h2>
+        <pre id="logs" role="log" aria-live="polite" aria-atomic="false"></pre>
+      </section>
+    </section>
+
+    <section aria-labelledby="status-title">
+      <div class="card top">
+        <div>
+          <h2 id="status-title">Статус</h2>
+          <div id="status" class="badge" aria-live="polite">Отключено</div>
+        </div>
+        <p class="muted" id="summary">Групп: 0 | Сущностей: 0 | Активных сущностей: 0</p>
+      </div>
+
+      <section class="card mt16" aria-labelledby="groups-title">
+        <h2 id="groups-title">Группы датчиков</h2>
+        <p class="muted mb12">
+          Основная строка показывает группу. Нажми на стрелку слева, чтобы раскрыть теги группы и увидеть их текущие значения. Состояние и ручной alarm относятся к группе целиком.
+        </p>
+        <div class="table-wrap">
+          <table class="status-table">
+            <caption class="sr-only">Список групп датчиков и тегов внутри каждой группы</caption>
+            <thead>
+              <tr>
+                <th scope="col">№</th>
+                <th scope="col">Группа / путь</th>
+                <th scope="col">Значение</th>
+                <th scope="col">Состояние</th>
+                <th scope="col">Ручной alarm</th>
+                <th scope="col">Осталось, сек</th>
+                <th scope="col">Режим / теги</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
