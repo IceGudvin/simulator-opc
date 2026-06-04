@@ -70,7 +70,7 @@
           <legend class="sr-only">Параметры ручных тревог</legend>
           <div class="row">
             <div>
-              <label for="group_count">Количество групп</label>
+              <label for="group_count">Количество датчиков</label>
               <input id="group_count" name="group_count" type="number" value="50" min="1" step="1" inputmode="numeric" autocomplete="off" />
             </div>
             <div>
@@ -99,26 +99,25 @@
           <h2 id="status-title">Статус</h2>
           <div id="status" class="badge" aria-live="polite">Отключено</div>
         </div>
-        <p class="muted" id="summary">Групп: 0 | Сущностей: 0 | Активных сущностей: 0</p>
+        <p class="muted" id="summary">Датчиков: 0 | Активных алармов: 0</p>
       </div>
 
-      <section class="card mt16" aria-labelledby="groups-title">
-        <h2 id="groups-title">Группы датчиков</h2>
+      <section class="card mt16" aria-labelledby="sensors-title">
+        <h2 id="sensors-title">Датчики</h2>
         <p class="muted mb12">
-          Основная строка показывает группу. Нажми на стрелку слева, чтобы раскрыть теги группы и увидеть их текущие значения. Состояние и ручной alarm относятся к группе целиком.
+          Каждая строка — один датчик. Значение — текущее IN-значение, записываемое на сервер каждую секунду.
         </p>
         <div class="table-wrap">
           <table class="status-table">
-            <caption class="sr-only">Список групп датчиков и тегов внутри каждой группы</caption>
+            <caption class="sr-only">Список датчиков и их текущее состояние</caption>
             <thead>
               <tr>
                 <th scope="col">№</th>
-                <th scope="col">Группа / путь</th>
-                <th scope="col">Значение</th>
+                <th scope="col">Датчик / путь</th>
+                <th scope="col">IN-значение</th>
                 <th scope="col">Состояние</th>
                 <th scope="col">Ручной alarm</th>
-                <th scope="col">Осталось, сек</th>
-                <th scope="col">Режим / теги</th>
+                <th scope="col">Осталось</th>
               </tr>
             </thead>
             <tbody id="rows"></tbody>
