@@ -45,7 +45,7 @@ async function apiPost(url, body = {}) {
   return data;
 }
 
-// ── localStorage ───────────────────────────────────────────────────────
+// ── localStorage ───────────────────────────────────────────────────────────
 const FIELDS = ['server_url','low','high','interval','upper_shift_time','lower_shift_time','random_mode'];
 function saveParams() {
   const obj = {};
@@ -90,6 +90,13 @@ function renderRows(rows) {
 
   const filtered = filterRows(rows);
 
+  // Update summary with filtered count
+  const summaryEl2 = document.getElementById('summary');
+  if (summaryEl2 && window.__lastActive !== undefined) {
+    const alarmCls = window.__lastActive > 0 ? 'summary-alarm' : '';
+    summaryEl2.innerHTML = `Датчиков: <strong>${filtered.length}</strong> &nbsp;|  Алармов: <strong class="${alarmCls}">${window.__lastActive}</strong>`;
+  }
+
   if (!filtered.length) {
     tbody.innerHTML = `<tr><td colspan="6" class="empty-cell">${searchQuery ? 'Ничего не найдено по запросу «' + escapeHtml(searchQuery) + '»' : 'Нет данных'}</td></tr>`;
     return;
@@ -107,7 +114,7 @@ function renderRows(rows) {
     const groupCls = hasCrit ? 'crit' : hasWarn ? 'warn' : '';
     const activeCount = items.filter(r => r.manual_alarm && r.manual_alarm !== '-').length;
     const badge = activeCount > 0 ? `<span class="group-badge">${activeCount} alarm</span>` : '';
-    const folderIcon = `<svg class="folder-icon" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.879a1.5 1.5 0 0 1 1.06.44L8.5 4.5H12.5A1.5 1.5 0 0 1 14 6v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11V4.5z" fill="currentColor" opacity=".18"/><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.879a1.5 1.5 0 0 1 1.06.44L8.5 4.5H12.5A1.5 1.5 0 0 1 14 6v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11V4.5z" stroke="currentColor" stroke-width="1.2"/></svg>`;
+    const folderIcon = `<svg class="folder-icon" width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.879a1.5 1.5 0 0 1 1.06.44L8.5 4.5H12.5A1.5 1.5 0 0 1 14 6v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11V4.5z" fill="currentColor" opacity=".18"/><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.879a1.5 1.5 0 0 1 1.06.44L8.5 4.5H12.5A1.5 1.5 0 0 1 14 6v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11V4.5z" stroke="currentColor" stroke-width="1.2"/></svg>`;
 
     html += `
       <tr class="group-header ${groupCls}" data-group="${escapeHtml(parent)}">
@@ -191,7 +198,7 @@ function applyData(data) {
   const summaryEl = byId('summary');
   if (summaryEl) {
     const alarmCls = (data.active || 0) > 0 ? 'summary-alarm' : '';
-    summaryEl.innerHTML = `Датчиков: <strong>${data.total ?? 0}</strong> &nbsp;|  Алармов: <strong class="${alarmCls}">${data.active ?? 0}</strong>`;
+    summaryEl.innerHTML = `Датчиков: <strong>${data.total ?? 0}</strong> &nbsp;|  Алармов: <strong class="${alarmCls}">${data.active ?? 0}</strong>`;
   }
 
   const logsEl = byId('logs');
@@ -214,6 +221,7 @@ function applyData(data) {
   }
 
   lastRows = Array.isArray(data.rows) ? data.rows : [];
+  window.__lastActive = data.active ?? 0;
   renderRows(lastRows);
 }
 
@@ -229,64 +237,134 @@ function connectWs() {
   };
 
   ws.onmessage = (e) => {
-    try { applyData(JSON.parse(e.data)); } catch(_) {}
+    try {
+      const data = JSON.parse(e.data);
+      if (data.ping) return;
+      applyData(data);
+    } catch (_) {}
   };
+
+  ws.onerror = () => {};
 
   ws.onclose = () => {
     setWsStatus('closed');
     wsReconnectTimer = setTimeout(connectWs, 3000);
   };
-
-  ws.onerror = () => {
-    ws.close();
-  };
 }
 
-function on(id, fn) {
-  byId(id)?.addEventListener('click', async () => {
+// ── Search ────────────────────────────────────────────────────────────
+function initSearch() {
+  const input = byId('sensor-search');
+  const clearBtn = byId('search-clear');
+  if (!input) return;
+
+  input.addEventListener('input', () => {
+    searchQuery = input.value.trim();
+    if (clearBtn) clearBtn.style.display = searchQuery ? 'flex' : 'none';
+    renderRows(lastRows);
+  });
+
+  if (clearBtn) {
+    clearBtn.style.display = 'none';
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      searchQuery = '';
+      clearBtn.style.display = 'none';
+      renderRows(lastRows);
+      input.focus();
+    });
+  }
+}
+
+// ── Buttons ────────────────────────────────────────────────────────────
+function initButtons() {
+  byId('btn-connect')?.addEventListener('click', async () => {
     clearMessage();
-    try { const d = await fn(); showMessage(d.message || 'OK'); }
-    catch (e) { showMessage(e.message, 'error'); }
+    const body = {
+      server_url: val('server_url'),
+      low: parseFloat(val('low')),
+      high: parseFloat(val('high')),
+      interval: parseFloat(val('interval')),
+      upper_shift_time: parseFloat(val('upper_shift_time')),
+      lower_shift_time: parseFloat(val('lower_shift_time')),
+      random_mode: val('random_mode'),
+    };
+    saveParams();
+    try {
+      const r = await apiPost('/api/connect', body);
+      showMessage(r.message || 'OK');
+    } catch (e) {
+      showMessage(e.message, 'error');
+    }
+  });
+
+  byId('btn-disconnect')?.addEventListener('click', async () => {
+    clearMessage();
+    try {
+      const r = await apiPost('/api/disconnect');
+      showMessage(r.message || 'OK');
+    } catch (e) {
+      showMessage(e.message, 'error');
+    }
+  });
+
+  byId('btn-apply-settings')?.addEventListener('click', async () => {
+    clearMessage();
+    const body = {
+      interval: parseFloat(val('interval')),
+      upper_shift_time: parseFloat(val('upper_shift_time')),
+      lower_shift_time: parseFloat(val('lower_shift_time')),
+      random_mode: val('random_mode'),
+    };
+    saveParams();
+    try {
+      const r = await apiPost('/api/settings', body);
+      showMessage(r.message || 'OK');
+    } catch (e) {
+      showMessage(e.message, 'error');
+    }
+  });
+
+  async function triggerGroup(mode) {
+    clearMessage();
+    const body = {
+      count: parseInt(val('group_count'), 10),
+      mode,
+      duration: parseFloat(val('group_duration')),
+    };
+    try {
+      const r = await apiPost('/api/group', body);
+      showMessage(r.message || 'OK');
+    } catch (e) {
+      showMessage(e.message, 'error');
+    }
+  }
+
+  byId('btn-warn')?.addEventListener('click', () => triggerGroup('warn'));
+  byId('btn-crit')?.addEventListener('click', () => triggerGroup('crit'));
+  byId('btn-mixed')?.addEventListener('click', () => triggerGroup('mixed'));
+
+  byId('btn-clear-alarms')?.addEventListener('click', async () => {
+    clearMessage();
+    try {
+      const r = await apiPost('/api/alarms/clear');
+      showMessage(r.message || 'OK');
+    } catch (e) {
+      showMessage(e.message, 'error');
+    }
   });
 }
 
+// ── Init ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // Load saved params
   const saved = loadParamsFromStorage();
   if (saved) {
-    FIELDS.forEach(f => { const el = byId(f); if (el && saved[f] != null) el.value = saved[f]; });
+    FIELDS.forEach(f => { const el = byId(f); if (el && saved[f] !== undefined) el.value = saved[f]; });
     defaultsLoaded = true;
   }
-  FIELDS.forEach(f => { const el = byId(f); if (el) el.addEventListener('change', saveParams); });
 
-  // Поиск
-  const searchEl = byId('sensor-search');
-  if (searchEl) {
-    searchEl.addEventListener('input', () => {
-      searchQuery = searchEl.value.trim();
-      renderRows(lastRows);
-    });
-    byId('search-clear')?.addEventListener('click', () => {
-      searchEl.value = '';
-      searchQuery = '';
-      searchEl.focus();
-      renderRows(lastRows);
-    });
-  }
-
+  initSearch();
+  initButtons();
   connectWs();
-
-  on('btn-connect', () => { saveParams(); return apiPost('/api/connect', {
-    server_url: val('server_url'), low: parseFloat(val('low')), high: parseFloat(val('high')),
-    interval: parseFloat(val('interval')), upper_shift_time: parseFloat(val('upper_shift_time')),
-    lower_shift_time: parseFloat(val('lower_shift_time')), random_mode: val('random_mode'),
-  }); });
-  on('btn-disconnect', () => apiPost('/api/disconnect'));
-  on('btn-apply-settings', () => { saveParams(); return apiPost('/api/settings', {
-    interval: parseFloat(val('interval')), upper_shift_time: parseFloat(val('upper_shift_time')),
-    lower_shift_time: parseFloat(val('lower_shift_time')), random_mode: val('random_mode'),
-  }); });
-  on('btn-warn',  () => apiPost('/api/group', { count: parseInt(val('group_count'), 10), mode: 'warn',  duration: parseFloat(val('group_duration')) }));
-  on('btn-crit',  () => apiPost('/api/group', { count: parseInt(val('group_count'), 10), mode: 'crit',  duration: parseFloat(val('group_duration')) }));
-  on('btn-mixed', () => apiPost('/api/group', { count: parseInt(val('group_count'), 10), mode: 'mixed', duration: parseFloat(val('group_duration')) }));
-  on('btn-clear-alarms', () => apiPost('/api/alarms/clear'));
 });
