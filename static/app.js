@@ -3,10 +3,10 @@ let defaultsLoaded = false;
 let ws = null;
 let wsReconnectTimer = null;
 const groupExpanded = {};
-// Храним предыдущие значения для flash: idx -> value
 const prevValues = {};
 let lastRows = [];
 let searchQuery = '';
+window.__lastActive = 0;
 
 function byId(id) { return document.getElementById(id); }
 function val(id) { return byId(id).value; }
@@ -68,11 +68,18 @@ function groupRows(rows) {
   const map = {};
   rows.forEach(row => {
     const parts = (row.path || '').split('/');
+    // parent = всё кроме последнего сегмента (имя датчика)
     const parent = parts.length > 1 ? parts.slice(0, -1).join('/') : (row.path || 'Прочее');
     if (!map[parent]) map[parent] = [];
     map[parent].push(row);
   });
   return map;
+}
+
+// Берём только последний сегмент пути для отображения имени группы
+function groupDisplayName(groupKey) {
+  const parts = groupKey.split('/');
+  return parts[parts.length - 1] || groupKey;
 }
 
 function filterRows(rows) {
@@ -90,11 +97,11 @@ function renderRows(rows) {
 
   const filtered = filterRows(rows);
 
-  // Update summary with filtered count
-  const summaryEl2 = document.getElementById('summary');
-  if (summaryEl2 && window.__lastActive !== undefined) {
+  // Обновляем счётчик датчиков по фактически отображаемым строкам
+  const summaryEl = document.getElementById('summary');
+  if (summaryEl) {
     const alarmCls = window.__lastActive > 0 ? 'summary-alarm' : '';
-    summaryEl2.innerHTML = `Датчиков: <strong>${filtered.length}</strong> &nbsp;|  Алармов: <strong class="${alarmCls}">${window.__lastActive}</strong>`;
+    summaryEl.innerHTML = `Датчиков: <strong>${filtered.length}</strong> &nbsp;|  Алармов: <strong class="${alarmCls}">${window.__lastActive}</strong>`;
   }
 
   if (!filtered.length) {
@@ -115,13 +122,15 @@ function renderRows(rows) {
     const activeCount = items.filter(r => r.manual_alarm && r.manual_alarm !== '-').length;
     const badge = activeCount > 0 ? `<span class="group-badge">${activeCount} alarm</span>` : '';
     const folderIcon = `<svg class="folder-icon" width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.879a1.5 1.5 0 0 1 1.06.44L8.5 4.5H12.5A1.5 1.5 0 0 1 14 6v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11V4.5z" fill="currentColor" opacity=".18"/><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.879a1.5 1.5 0 0 1 1.06.44L8.5 4.5H12.5A1.5 1.5 0 0 1 14 6v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11V4.5z" stroke="currentColor" stroke-width="1.2"/></svg>`;
+    // Показываем только последний сегмент пути как имя группы
+    const displayName = groupDisplayName(parent);
 
     html += `
       <tr class="group-header ${groupCls}" data-group="${escapeHtml(parent)}">
         <td colspan="6" class="group-cell">
           <span class="group-arrow">${isOpen ? '&#9660;' : '&#9658;'}</span>
           ${folderIcon}
-          <span class="group-name">${escapeHtml(parent)}</span>
+          <span class="group-name" title="${escapeHtml(parent)}">${escapeHtml(displayName)}</span>
           <span class="group-count">${items.length}</span>
           ${badge}
         </td>
@@ -148,7 +157,6 @@ function renderRows(rows) {
 
   tbody.innerHTML = html;
 
-  // Flash-эффект на изменившиеся ячейки
   tbody.querySelectorAll('[data-flash="1"] .val-cell').forEach(td => {
     td.classList.add('val-flash');
     setTimeout(() => td.classList.remove('val-flash'), 800);
@@ -180,7 +188,6 @@ function setWsStatus(state) {
 }
 
 function applyData(data) {
-  // Статус подключения
   const statusEl = byId('status');
   if (statusEl) {
     if (data.connecting) {
@@ -193,12 +200,6 @@ function applyData(data) {
       statusEl.textContent = 'Отключено';
       statusEl.className = 'badge badge-off';
     }
-  }
-
-  const summaryEl = byId('summary');
-  if (summaryEl) {
-    const alarmCls = (data.active || 0) > 0 ? 'summary-alarm' : '';
-    summaryEl.innerHTML = `Датчиков: <strong>${data.total ?? 0}</strong> &nbsp;|  Алармов: <strong class="${alarmCls}">${data.active ?? 0}</strong>`;
   }
 
   const logsEl = byId('logs');
@@ -357,7 +358,6 @@ function initButtons() {
 
 // ── Init ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  // Load saved params
   const saved = loadParamsFromStorage();
   if (saved) {
     FIELDS.forEach(f => { const el = byId(f); if (el && saved[f] !== undefined) el.value = saved[f]; });

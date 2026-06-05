@@ -462,8 +462,20 @@ class Backend:
                 "rows": rows,
             }
 
+    def _reset_state(self):
+        """Сброс внутреннего состояния без лока — вызывать только под self.lock."""
+        self.connected = False
+        self.connecting = False
+        self.sensors = []
+        self.stop_event.clear()
+        self.worker_thread = None
+
     def connect(self, params):
         with self.lock:
+            # Если тред завис/умер — принудительно сбрасываем состояние
+            if self.worker_thread is not None and not self.worker_thread.is_alive():
+                self._reset_state()
+
             if self.connecting:
                 return False, "Подключение уже выполняется"
             if self.worker_thread and self.worker_thread.is_alive():
@@ -507,6 +519,7 @@ class Backend:
             self.connected = False
             self.connecting = False
             self.sensors = []
+            self.worker_thread = None
         self.log("Эмулятор остановлен")
 
     async def _async_main(self):
@@ -739,12 +752,10 @@ def api_settings(req: SettingsRequest):
 async def websocket_endpoint(websocket: WebSocket):
     await ws_manager.connect(websocket)
     try:
-        # Send initial state immediately on connect
         await websocket.send_text(json.dumps(backend.status(), ensure_ascii=False))
-        # Keep connection alive; broadcaster pushes updates every second
         while True:
             await asyncio.sleep(30)
-            await websocket.send_text('{"ping":1}')  # keepalive
+            await websocket.send_text('{"ping":1}')
     except WebSocketDisconnect:
         pass
     except Exception:
