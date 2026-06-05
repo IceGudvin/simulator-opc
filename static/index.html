@@ -13,7 +13,7 @@
     <section aria-labelledby="page-title">
       <div class="card">
         <h1 id="page-title">OPC UA эмулятор</h1>
-        <p class="muted">Веб-версия для запуска в Docker и открытия через браузер.</p>
+        <p class="muted">Веб-версия для запуска в Docker.</p>
         <div id="ui-message" class="ui-message hidden" role="status" aria-live="polite"></div>
       </div>
 
@@ -95,30 +95,33 @@
 
     <section aria-labelledby="status-title">
       <div class="card top">
-        <div>
+        <div class="status-left">
           <h2 id="status-title">Статус</h2>
-          <div id="status" class="badge" aria-live="polite">Отключено</div>
+          <div id="status" class="badge badge-off" aria-live="polite">Отключено</div>
+          <span id="ws-status" class="ws-badge ws-closed">• WS: отключен</span>
         </div>
-        <p class="muted" id="summary">Датчиков: 0 | Активных алармов: 0</p>
+        <p class="muted" id="summary">Датчиков: 0 &nbsp;|  Алармов: 0</p>
       </div>
 
       <section class="card mt16" aria-labelledby="sensors-title">
-        <h2 id="sensors-title">Датчики</h2>
-        <p class="muted mb12">
-          Датчики сгруппированы по папкам. Кликните на строку группы для раскрытия.
-          Значение — текущее <strong>OUT</strong>-значение (физическая величина).
-          Соответствующее IN-значение (сигнал 4–20мА) записывается на OPC-сервер.
-        </p>
+        <div class="sensors-header">
+          <h2 id="sensors-title">Датчики</h2>
+          <div class="search-wrap">
+            <svg class="search-icon" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.6"/><path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <input id="sensor-search" type="search" placeholder="Поиск по имени датчика или папке..." autocomplete="off" />
+            <button id="search-clear" class="search-clear" type="button" aria-label="Очистить поиск">&times;</button>
+          </div>
+        </div>
         <div class="table-wrap">
           <table class="status-table">
-            <caption class="sr-only">Список датчиков и их текущее состояние</caption>
+            <caption class="sr-only">Список датчиков</caption>
             <thead>
               <tr>
                 <th scope="col">№</th>
                 <th scope="col">Датчик</th>
-                <th scope="col">OUT-значение</th>
+                <th scope="col">OUT</th>
                 <th scope="col">Состояние</th>
-                <th scope="col">Ручной alarm</th>
+                <th scope="col">Alarm</th>
                 <th scope="col">Осталось</th>
               </tr>
             </thead>
