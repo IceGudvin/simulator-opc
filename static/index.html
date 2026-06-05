@@ -25,11 +25,11 @@
           <input id="server_url" name="server_url" type="text" autocomplete="off" spellcheck="false" />
           <div class="row">
             <div>
-              <label for="low">Нижняя граница</label>
+              <label for="low">Нижняя граница (OUT)</label>
               <input id="low" name="low" type="number" step="any" inputmode="decimal" autocomplete="off" />
             </div>
             <div>
-              <label for="high">Верхняя граница</label>
+              <label for="high">Верхняя граница (OUT)</label>
               <input id="high" name="high" type="number" step="any" inputmode="decimal" autocomplete="off" />
             </div>
           </div>
@@ -105,7 +105,9 @@
       <section class="card mt16" aria-labelledby="sensors-title">
         <h2 id="sensors-title">Датчики</h2>
         <p class="muted mb12">
-          Каждая строка — один датчик. Значение — текущее IN-значение, записываемое на сервер каждую секунду.
+          Датчики сгруппированы по папкам. Кликните на строку группы для раскрытия.
+          Значение — текущее <strong>OUT</strong>-значение (физическая величина).
+          Соответствующее IN-значение (сигнал 4–20мА) записывается на OPC-сервер.
         </p>
         <div class="table-wrap">
           <table class="status-table">
@@ -113,8 +115,8 @@
             <thead>
               <tr>
                 <th scope="col">№</th>
-                <th scope="col">Датчик / путь</th>
-                <th scope="col">IN-значение</th>
+                <th scope="col">Датчик</th>
+                <th scope="col">OUT-значение</th>
                 <th scope="col">Состояние</th>
                 <th scope="col">Ручной alarm</th>
                 <th scope="col">Осталось</th>
